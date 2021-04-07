@@ -258,34 +258,32 @@ def computeSbox3(numberSbox,block,bruteforce):
                 l,r =  computeSbox(testC)
                 return l,r
             
-
-#cut a 48 bits block into 8 blocks of 6 bits
-def cut48(Key):
-    block = []
-    for i in range(8):
-        mask = "111111"
-        mask = mask[:(i*6)+6].zfill((i*6)+6)
-        mask = mask.ljust(48,'0')
-        imask = int(mask,2)
+def cutXinY(Key,X,Y,on):
+    part = 0
+    Ki = []
+    mask = ""
+    if X % Y == 0:
+        part = X / Y
+    else:
+        return Ki
+    part = int(part)
+    for i in range(part):
+        mask = mask + "1"
+    #print(mask)
+    for i in range(Y):
+        tmp = mask
+        tmp = tmp[:(i*part)+part].zfill((i*part)+part)
+        tmp = tmp.ljust(X,'0')
+        imask = int(tmp,2)
+        #print(hex(imask))
         res = Key & imask
-        block.append(res)
-    return block
-
-#cut a 56 bits block into two 28 bits blocks
-def cut56(Key):
-    C = (Key & 0xFFFFFFF0000000) >> 28
-    D = Key & 0x0000000FFFFFFF
-    return C,D
-
-#cut a 64 bits block into two 32 bits blocks
-def cut64(Key):
-    LeftP = 0
-    RightP = 0      
-    Mask = 0xFFFFFFFF
-    LeftP = (Key >> 32) & Mask
-    RightP = (Key & Mask)
-    
-    return LeftP,RightP
+        if(on == "on"):
+            res = res >> part
+            on = "off"
+        Ki.append(res)
+    return Ki
+        
+        
 
 #do a n-shift to the left for a gathered block eg: 10010 -> 00101 for 1-shift
 def leftCirculatShift(bit,shift,size):
@@ -301,28 +299,25 @@ def F(RightP,Ki):
     res = 0
     tmp = 0
     #print(hex(T))
-    cutted = cut48(T)
+    cutted = cutXinY(T,48,8,"off")
     for block,i in zip(cutted,range(8)):
         tmp = block >> (42 - (i*6))
         liner,column = computeSbox(tmp)       
         res = res | (Sbox[i][liner][column] << ( 32 - (i+1) * 4 ) ) 
         liner = 0
     return permutation(res,P,32)
-       
-        
-    return 0
 
 #Full computation of DES
 def DES(msg,Key):
     Ki = keySchedule(Key)
     Init = permutation(msg,IP,64)
-    L,R = cut64(Init)  
+    LR = cutXinY(Init,64,2,"on")  
     for ki in Ki:
-        Li1 = R
-        Ri1 = L ^F(R,ki)      
-        L = Li1
-        R = Ri1      
-        res = (R << 32) | L
+        Li1 = LR[1]
+        Ri1 = LR[0] ^F(LR[1],ki)      
+        LR[0] = Li1
+        LR[1] = Ri1      
+        res = (LR[1] << 32) | LR[0]
         Res = permutation(res,IP_1,64)
     return Res
 
@@ -340,12 +335,12 @@ def keySchedule(Key):
     Ki = []
     vi = [1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1]  
     T = permutation(Key,PC1,64)
-    C0,D0 = cut56(T)    
+    CD0 = cutXinY(T,56,2,"on")    
     for v in vi:      
-      C0 = leftCirculatShift(C0, v, 28)
-      D0 = leftCirculatShift(D0, v, 28)
-      concC = C0 << 28
-      concD = D0
+      CD0[0] = leftCirculatShift(CD0[0], v, 28)
+      CD0[1] = leftCirculatShift(CD0[1], v, 28)
+      concC = CD0[0] << 28
+      concD = CD0[1]
       conc = concD | concC        
       Ki.append(permutation(conc,PC2,56))      
     return Ki
@@ -362,8 +357,8 @@ def R15XorFaulted():
         R15XoRfaulted = fault ^ cypher
         R15XoRfaulted = permutation(R15XoRfaulted,IP,64)
         
-        L16,R16 = cut64(R15XoRfaulted)
-        expansionR16 = bin(permutation(R16,E,32))[2:].zfill(48)
+        LR16 = cutXinY(R15XoRfaulted,64,2,"on")
+        expansionR16 = bin(permutation(LR16[1],E,32))[2:].zfill(48)
         #print(expansionR16)
         expansionR16_list = [expansionR16[i:i+6] for i in range(0, 48, 6)]
             
@@ -374,7 +369,10 @@ def R15XorFaulted():
     
                 
     #print(sboxAttackContent)
-    #print(sboxAttackIndex)
+    for i in sboxAttackIndex:
+        
+        print("potential false cypher portion key for sbox " + i)
+        print(sboxAttackIndex[i])
     return sboxAttackContent,sboxAttackIndex
                 
         #print(expansionR16_list)   
@@ -386,19 +384,19 @@ def crackK16(cypher,faux):
     sol = {"{}".format(i+1): [] for i in range(8)}
     content,index = R15XorFaulted()
     init = permutation(cypher,IP,64)
-    L16,R16 = cut64(init)
+    LR16 = cutXinY(init,64,2,"on")
     for i in range(8):
         for j in range(len(content["{}".format(i+1)])):
              
-            L16false,R16false = cut64(permutation(content["{}".format(i+1)][j],IP,64))
+            LR16False = cutXinY(permutation(content["{}".format(i+1)][j],IP,64),64,2,"on")
             
             #P^-1(L16 xor L16*)
-            xor = L16 ^ L16false
+            xor = LR16[0] ^ LR16False[0]
             xor = permutation(xor,P_1,32)
             
             #Préparation de E(R15) et E(R15*)
-            R15 = permutation(R16,E,32)
-            R15false = permutation(R16false,E,32)
+            R15 = permutation(LR16[1],E,32)
+            R15false = permutation(LR16False[1],E,32)
             candidate = []
             
             #Finding K16 with brute force costs 2^6 = 64 per j possible false-cypher that went to the i sbox
@@ -431,7 +429,9 @@ def crackK16(cypher,faux):
         K16 = K16 | solution 
     
         print("Sbox", i + 1)
-        print("Solution", i+1 , "=", hex(solution))
+        print("Potential solution")
+        print(sol["{}".format(i+1)])
+        print("Solution", i+1 , "=", hex(solution), "=",solution )
         print("current K16 =", hex(K16))
         print()
             
@@ -481,6 +481,7 @@ def setParityBit(Key):
 def recoverPosition(tab):
     for i in range(8):
         tab[i] = 64 - tab[i]
+    print(tab)    
     return tab
 
 def findPosition(PC_1,PC_2):
@@ -493,22 +494,17 @@ def findPosition(PC_1,PC_2):
            tab.append(-1)
        else:
            tab.append(PC_2[PC_1[i]-1])
-    #print(tab)
+    print(tab)
     for i,j in zip(tab,range(64)):
         if i == 0:
             ind.append(j+1)
-    #print(ind)
+    print(ind)
     return ind
 
 
 ###test phase
-    
+
 K = crackK(cypher,faux)
 print("K = ",hex(K))
-
-
-
-
-
 
 
